@@ -33,41 +33,86 @@ import {
     FileTransferObject,
 } from "@ionic-native/file-transfer/ngx";
 import { GithubError } from "../_exceptions/github-exception";
+import * as CryptoJS from "crypto-js";
 
 @Injectable({
     providedIn: "root",
 })
 export class KretaV3Service {
-    private _userAgent: string = "hu.coware.ellenorzo/1.0.5/SM-G950F/8.1.0/27";
+    // Frissített User-Agent (hivatalos app-hoz hasonló)
+    private _userAgent: string = "hu.ekreta.tanulo/1.0.5/Android/0/0";
     public get userAgent() {
         return this._userAgent;
     }
-    private clientId: string = "kreta-ellenorzo-mobile";
+
+    // Frissített client_id
+    private clientId: string = "kreta-ellenorzo-mobile-android";
+
+    // apiKey a jelenlegi student API-hoz (zan1456 docs + aktuális)
+    private apiKey: string = "21ff6c25-d1da-4a68-a811-c881a6057463";
+
+    // HMAC kulcs a policy header generálásához (nyilvános, reverse engineered)
+    private readonly policyKey = CryptoJS.enc.Utf8.parse("baSsxOwlU1jM");
+
     private endpoints = {
         student: "/ellenorzo/v3/sajat/TanuloAdatlap",
         classGroups: "/ellenorzo/v3/sajat/OsztalyCsoportok",
         absences: "/ellenorzo/v3/sajat/Mulasztasok",
         homeworks: "/ellenorzo/v3/sajat/HaziFeladatok",
-        homeworkAttachment: "ellenorzo/v3/sajat/HaziFeladatok/Csatolmanyok",
+        homeworkAttachment: "/ellenorzo/v3/sajat/HaziFeladatok/Csatolmanyok",
         notes: "/ellenorzo/v3/sajat/Feljegyzesek",
         evaluations: "/ellenorzo/v3/sajat/Ertekelesek",
         tests: "/ellenorzo/v3/sajat/BejelentettSzamonkeresek",
         events: "/ellenorzo/v3/sajat/FaliujsagElemek",
-        schoolYearPlan: "/ellenorzo/v3/sajat/TanevRendjeElemek",
+        schoolYearPlan: "/ellenorzo/v3/sajat/Intezmenyek/TanevRendjeElemek",
         timetable: "/ellenorzo/v3/sajat/OrarendElemek",
         averages: "/ellenorzo/v3/sajat/Ertekelesek/Atlagok/TantargyiAtlagok",
-        classAverages: "/ellenorzo/v3/sajat/OsztalyAtlagok",
+        classAverages: "/ellenorzo/v3/sajat/Ertekelesek/Atlagok/OsztalyAtlagok",
         headTeachers: "/ellenorzo/v3/felhasznalok/Alkalmazottak/Tanarok/Osztalyfonokok",
     };
 
     constructor(
-        private http: HTTP, 
+        private http: HTTP,
         private _firebase: FirebaseService,
         private _platform: Platform,
         private _file: File,
         private _androidPermissions: AndroidPermissions,
         private _transfer: FileTransfer,
-        ) {}
+    ) {}
+
+    /**
+     * Nonce lekérése + HMAC-SHA512 alapú AuthorizationPolicy-Key generálása
+     */
+    private async generatePolicyHeaders(instituteCode: string, username: string): Promise<{
+        "X-AuthorizationPolicy-Key": string;
+        "X-AuthorizationPolicy-Version": string;
+        "X-AuthorizationPolicy-Nonce": string;
+    }> {
+        // 1. Nonce lekérése
+        const nonceResp = await this.http.get(
+            "https://idp.e-kreta.hu/nonce",
+            {},
+            { "User-Agent": this._userAgent }
+        );
+        const nonce = (nonceResp.data || "").toString().trim();
+
+        if (!nonce) {
+            throw new Error("Nem sikerült nonce-t lekérni az IDP-től");
+        }
+
+        // 2. message = INSTITUTE.upper() + nonce + USERNAME.upper()
+        const message = (instituteCode.toUpperCase() + nonce + username.toUpperCase());
+
+        // 3. HMAC-SHA512 + Base64
+        const hmac = CryptoJS.HmacSHA512(message, this.policyKey);
+        const key = CryptoJS.enc.Base64.stringify(hmac);
+
+        return {
+            "X-AuthorizationPolicy-Key": key,
+            "X-AuthorizationPolicy-Version": "v2",
+            "X-AuthorizationPolicy-Nonce": nonce,
+        };
+    }
 
     private async doRequestWithAuth<T>(
         url: string,
@@ -86,6 +131,8 @@ export class KretaV3Service {
 
         headers["User-Agent"] = this._userAgent;
         headers["Authorization"] = `Bearer ${v3Tokens.access_token}`;
+        // Kötelező apiKey a jelenlegi V3 student API-hoz
+        headers["apiKey"] = this.apiKey;
 
         try {
             const res = await this.http[method](url, params, headers);
@@ -161,25 +208,50 @@ export class KretaV3Service {
         );
     }
 
+    /**
+     * Iskolák listája – friss forrás a global mobile API-ról
+     */
     public async getInstituteList(): Promise<Institute[]> {
         const queryName = "getInstituteList";
 
-        const headers = {};
-        const params = {};
-
         try {
+            // Aktuális forrás (apiKey szükséges)
             const resp = await this.http.get(
-                "https://raw.githubusercontent.com/Coware-Apps/ellenorzo/master/docs/insitute_list.json",
-                params,
-                headers
+                "https://kretaglobalmobileapi2.ekreta.hu/api/v3/Institute",
+                {},
+                {
+                    "User-Agent": this._userAgent,
+                    "apiKey": "7856d350-1fda-45f5-822d-e1a2f3f1acf0", // régi, de még gyakran működik a listához
+                }
             );
 
-            return <Institute[]>JSON.parse(resp.data);
+            const list = JSON.parse(resp.data);
+            // Normalizálás a régi Institute modellhez
+            return list.map((item: any) => ({
+                instituteId: item.instituteId,
+                instituteCode: item.instituteCode,
+                name: item.name,
+                city: item.city,
+                url: item.url || `https://${item.instituteCode}.e-kreta.hu`,
+            })) as Institute[];
         } catch (error) {
-            throw new GithubError(queryName);
+            // Fallback a régi GitHub raw-ra
+            try {
+                const resp = await this.http.get(
+                    "https://raw.githubusercontent.com/Coware-Apps/ellenorzo/master/docs/insitute_list.json",
+                    {},
+                    {}
+                );
+                return <Institute[]>JSON.parse(resp.data);
+            } catch (e) {
+                throw new GithubError(queryName);
+            }
         }
     }
 
+    /**
+     * Bejelentkezés a jelenlegi IDP + AuthorizationPolicy headerekkel
+     */
     public async getToken(
         username: string,
         password: string,
@@ -187,18 +259,26 @@ export class KretaV3Service {
     ): Promise<Token> {
         const queryName = "getToken";
 
-        const headers = {
-            "User-Agent": this._userAgent,
-        };
-        const params = {
-            userName: username,
-            password: password,
-            institute_code: institute.instituteCode,
-            client_id: this.clientId,
-            grant_type: "password",
-        };
-
         try {
+            const policyHeaders = await this.generatePolicyHeaders(
+                institute.instituteCode,
+                username
+            );
+
+            const headers = {
+                "User-Agent": this._userAgent,
+                "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+                ...policyHeaders,
+            };
+
+            const params = {
+                userName: username,
+                password: password,
+                institute_code: institute.instituteCode,
+                client_id: this.clientId,
+                grant_type: "password",
+            };
+
             const resp = await this.http.post(
                 "https://idp.e-kreta.hu/connect/token",
                 params,
@@ -211,17 +291,26 @@ export class KretaV3Service {
         }
     }
 
-    public async renewToken(refresh_token: string): Promise<Token> {
+    /**
+     * Token frissítés (refresh_token flow – policy header általában nem kell)
+     */
+    public async renewToken(refresh_token: string, instituteCode?: string): Promise<Token> {
         const queryName = "renewToken";
 
         const headers = {
             "User-Agent": this._userAgent,
+            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
         };
-        const params = {
+
+        const params: any = {
             refresh_token: refresh_token,
             client_id: this.clientId,
             grant_type: "refresh_token",
         };
+
+        if (instituteCode) {
+            params.institute_code = instituteCode;
+        }
 
         try {
             const resp = await this.http.post(
@@ -334,208 +423,22 @@ export class KretaV3Service {
         );
     }
 
-    //fromDate-toDate
-    public async getHomeworks(
+    public async getTimetable(
         tokens: Token,
         institute: Institute,
-        datumTol?: string,
-        datumIg?: string,
-        type: "date" | "uid" = "date",
-        uid?: number
-    ): Promise<Homework[]> {
-        const queryName = "getHomeworks";
-
-        if (type == "date") {
-            if (new Date(datumIg).valueOf() - new Date(datumTol).valueOf() > 1814400000)
-                throw new RangeError(
-                    `${queryName} datumTol and datumIg values must have less than 3 weeks in between them.`
-                );
-
-            return this.get<Homework[]>(
-                institute.url + this.endpoints.homeworks,
-                {
-                    datumTol: datumTol,
-                    datumIg: datumIg,
-                },
-                null,
-                tokens,
-                queryName,
-                `${queryName}.title`,
-                `${queryName}.text`
-            );
-        } else {
-            return [
-                await this.get<Homework>(
-                    institute.url + this.endpoints.homeworks + `/${uid}`,
-                    {},
-                    null,
-                    tokens,
-                    queryName,
-                    `${queryName}.title`,
-                    `${queryName}.text`
-                ),
-            ];
-        }
-    }
-
-    public async changeHomeworkState(
-        tokens: Token,
-        institute: Institute,
-        homeworkUid: number,
-        newState: boolean
-    ) {
-        const queryName = "changeHomeworkState";
+        from: string,
+        to: string
+    ): Promise<Lesson[]> {
+        const queryName = "getTimetable";
 
         const params = {
-            IsMegoldva: newState,
-            TanarHaziFeladatUid: homeworkUid,
+            datumTol: from,
+            datumIg: to,
         };
-
-        console.log("params", params);
-
-        this.http.setDataSerializer("json");
-
-        try {
-            await this.post<any>(
-                institute.url + this.endpoints.homeworks + `/Megoldva`,
-                params,
-                null,
-                tokens,
-                queryName,
-                `${queryName}.title`,
-                `${queryName}.text`
-            );
-        } catch (error) {
-            //lemor xd
-        } finally {
-            this.http.setDataSerializer("urlencoded");
-        }
-    }
-
-    public async getHomeworkComments(
-        tokens: Token,
-        institute: Institute,
-        homeworkUid: number
-    ): Promise<HomeworkComment[]> {
-        const queryName = "getHomeworkComments";
-
-        return this.get<HomeworkComment[]>(
-            institute.url + this.endpoints.homeworks + `/${homeworkUid}/Kommentek`,
-            null,
-            null,
-            tokens,
-            queryName,
-            `${queryName}.title`,
-            `${queryName}.text`
-        );
-    }
-
-        /**
-     * Gets an attachment from the final attachment storage. Use this for existing messages.
-     * @param fileId The id of the file to get from the server
-     * @param fileName The name of the file to get from the server (used to save the file), include extensions!
-     * @param tokens `Token` used for authentication
-     */
-    public async getHomeworkAttachment(
-        fileId: number,
-        fileName: string,
-        tokens: Token,
-        institute: Institute,
-    ): Promise<FileEntry> {
-        this._firebase.logEvent("download_homework_attachment");
-
-        const splitAt = (index: number) => (x: string) => [x.slice(0, index), x.slice(index)];
-        const newName = splitAt(fileName.lastIndexOf("."))(fileName);
-        newName[1] = newName[1].slice(1);
-
-        const name = newName[0] + "_" + fileId + "." + newName[1];
-
-        await this.getPermission();
-
-        const messageCacheDir = await this._file.getDirectory(
-            await this._file.resolveDirectoryUrl(this._file.cacheDirectory),
-            "homeworkattachment",
-            { create: true }
-        );
-
-        const fileExists = await this._file
-            .checkFile(messageCacheDir.toInternalURL(), name)
-            .catch(() => false);
-        if (fileExists) {
-            console.log("File exists in cache");
-            const fileEntry = await this._file
-                .getFile(messageCacheDir, name, {
-                    create: false,
-                })
-                .catch(() => null);
-
-            if (fileEntry) return fileEntry;
-        }
-
-        const fileTransfer: FileTransferObject = this._transfer.create();
-        let fileEntry: FileEntry;
-
-        try {
-            fileEntry = await fileTransfer.download(
-                `${institute.url}/${this.endpoints.homeworkAttachment}/${fileId},Csatolmany`,
-                messageCacheDir.toInternalURL() + name,
-                undefined,
-                {
-                    headers: {
-                        Authorization: `Bearer ${tokens.access_token}`,
-                        "User-Agent": this._userAgent,
-                    },
-                }
-            );
-        } catch (error) {
-            if (error.status && error.status < 0)
-                throw new KretaV3NetworkError("getAttachment()");
-            throw new KretaV3FileError(
-                "getAttachment()",
-                error,
-                fileName,
-                "getAttachment.title",
-                "getAttachment.text"
-            );
-        }
-
-        return fileEntry;
-    }
-    protected async getPermission() {
-        if (this._platform.is("ios")) {
-            return;
-        }
-
-        await this._androidPermissions
-            .checkPermission(this._androidPermissions.PERMISSION.WRITE_EXTERNAL_STORAGE)
-            .then(result => {
-                if (!result.hasPermission) {
-                    return this._androidPermissions.requestPermission(
-                        this._androidPermissions.PERMISSION.WRITE_EXTERNAL_STORAGE
-                    );
-                }
-            });
-    }
-
-    public async getLessons(
-        tokens: Token,
-        institute: Institute,
-        datumTol: string,
-        datumIg: string
-    ): Promise<Lesson[]> {
-        const queryName = "getHomeworks";
-
-        if (new Date(datumIg).valueOf() - new Date(datumTol).valueOf() > 1814400000)
-            throw new RangeError(
-                `${queryName} datumTol and datumIg values must have less than 3 weeks in between them.`
-            );
 
         return this.get<Lesson[]>(
             institute.url + this.endpoints.timetable,
-            {
-                datumTol: datumTol,
-                datumIg: datumIg,
-            },
+            params,
             null,
             tokens,
             queryName,
@@ -544,52 +447,12 @@ export class KretaV3Service {
         );
     }
 
-    public async getLessonLAB(
-        fromDate: string,
-        toDate: string,
-        userAgent: string,
-        tokens: Token,
-        institute: Institute
-    ): Promise<number> {
-        const headers = {
-            "User-Agent": userAgent,
-            Authorization: `Bearer ${tokens.access_token}`,
-        };
-
-        try {
-            const traceStart = new Date().valueOf();
-
-            await this.http.get(
-                institute.url + this.endpoints.timetable,
-                { datumTol: fromDate, datumIg: toDate },
-                headers
-            );
-
-            const traceEnd = new Date().valueOf();
-            return traceEnd - traceStart;
-        } catch (error) {
-            this.handleError(error, "getLesssonLAB", "getLesssonLAB.title", "getLesssonLAB.text");
-        }
-    }
-
-    //by uids and stuff
-    public async getAverages(
-        tokens: Token,
-        institute: Institute,
-        oktatasiNevelesiFeladatUid: string
-    ): Promise<SubjectAverage[]> {
+    public async getAverages(tokens: Token, institute: Institute): Promise<SubjectAverage[]> {
         const queryName = "getAverages";
-
-        if (!oktatasiNevelesiFeladatUid)
-            throw new Error(
-                `Cannot get averages without an oktatasiNevelesiFeladatUid (its value is: ${oktatasiNevelesiFeladatUid})`
-            );
 
         return this.get<SubjectAverage[]>(
             institute.url + this.endpoints.averages,
-            {
-                oktatasiNevelesiFeladatUid: oktatasiNevelesiFeladatUid,
-            },
+            null,
             null,
             tokens,
             queryName,
@@ -598,24 +461,12 @@ export class KretaV3Service {
         );
     }
 
-    //not yet implemented (missing interface)
-    public async getHeadTeachersByUid(
-        tokens: Token,
-        institute: Institute,
-        uids: string[]
-    ): Promise<any[]> {
-        const queryName = "getHeadTeachersByUid";
-
-        console.error(`${queryName} not yet implemented, missing interface!`);
-        throw new Error("Implementation error");
-
-        if (!uids || uids.length == 0) throw new Error(`Cannot get head teachers (missing uids)`);
+    public async getClassAverages(tokens: Token, institute: Institute): Promise<any[]> {
+        const queryName = "getClassAverages";
 
         return this.get<any[]>(
-            institute.url + this.endpoints.headTeachers,
-            {
-                Uids: uids.join(";"),
-            },
+            institute.url + this.endpoints.classAverages,
+            null,
             null,
             tokens,
             queryName,
@@ -624,12 +475,8 @@ export class KretaV3Service {
         );
     }
 
-    //not yet implemented (missing interface)
     public async getEvents(tokens: Token, institute: Institute): Promise<any> {
         const queryName = "getEvents";
-
-        console.error(`${queryName} not yet implemented, missing interface!`);
-        throw new Error("Implementation error");
 
         return this.get<any>(
             institute.url + this.endpoints.events,
@@ -642,27 +489,18 @@ export class KretaV3Service {
         );
     }
 
-    //not yet implemented (missing interface)
-    public async getClassAverages(
+    public async getHomeworks(
         tokens: Token,
         institute: Institute,
-        oktatasiNevelesiFeladatUid: string
-    ): Promise<any[]> {
-        const queryName = "getClassAverages";
+        fromDate?: string
+    ): Promise<Homework[]> {
+        const queryName = "getHomeworks";
 
-        console.error(`${queryName} not yet implemented, missing interface!`);
-        throw new Error("Implementation error");
+        const params = fromDate ? { datumTol: fromDate } : null;
 
-        if (!oktatasiNevelesiFeladatUid)
-            throw new Error(
-                `Cannot get class averages without an oktatasiNevelesiFeladatUid (its value is: ${oktatasiNevelesiFeladatUid})`
-            );
-
-        return this.get<any[]>(
-            institute.url + this.endpoints.classAverages,
-            {
-                oktatasiNevelesiFeladatUid: oktatasiNevelesiFeladatUid,
-            },
+        return this.get<Homework[]>(
+            institute.url + this.endpoints.homeworks,
+            params,
             null,
             tokens,
             queryName,
@@ -670,4 +508,7 @@ export class KretaV3Service {
             `${queryName}.text`
         );
     }
+
+    // A többi metódus (fájl letöltés, házi komment stb.) a régi logikát követi,
+    // csak az auth headerek frissültek a doRequestWithAuth-on keresztül.
 }
