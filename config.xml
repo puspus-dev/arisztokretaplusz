@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='utf-8'?>
-<widget id="hu.coware.ellenorzo" version="1.7.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
-    <name>Arisztokréta +</name>
+<widget id="hu.puspus.arisztokreta" version="1.7.0" xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
+    <name>ArisztoKretaPlusz</name>
     <description>Nem hivatalos kliens a KRETA rendszerhez. Az eredeti alkalmazást a Coware-Apps készítette!</description>
     <author email="puspus@lifemail.hu" href="https://puspus-dev.github.io/arisztowebsite/">Coware</author>
     <content src="index.html" />
