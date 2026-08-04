@@ -1,0 +1,40 @@
+name: Build
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:   # manuálisan is indítható a GitHubon
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 16
+        uses: actions/setup-node@v4
+        with:
+          node-version: 16
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Install missing local-notifications package
+        run: npm install @ionic-native/local-notifications@5.28.0 --save --legacy-peer-deps
+
+      - name: Build (Angular)
+        run: npx ng build --configuration=production
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider   # biztonsági tartalék
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: www
+          path: www/
+          retention-days: 7
