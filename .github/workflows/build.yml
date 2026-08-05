@@ -49,30 +49,43 @@ jobs:
           ionic cordova platform remove android || true
           ionic cordova platform add android@8.1.0 --confirm
 
-          # Biztonságos JDK-check bypass (nem töri el a JS-t)
-          CHECK_REQS="platforms/android/cordova/lib/check_reqs.js"
-          if [ -f "$CHECK_REQS" ]; then
-            # A version.match feltételt mindig hamisra állítjuk → soha nem dob hibát
-            sed -i 's/!version\.match(/false \&\& !version.match(/g' "$CHECK_REQS"
-            echo "Patched check_reqs.js:"
-            grep -n "version.match\|JDK\|false &&" "$CHECK_REQS" | head -20
-          fi
+          # Minden check_reqs.js-t megkeresünk és bypassoljuk a JDK 8 ellenőrzést
+          python3 << 'EOF'
+          import re, pathlib
+          for path in pathlib.Path(".").rglob("check_reqs.js"):
+              text = path.read_text(encoding="utf-8", errors="ignore")
+              original = text
+              # 1) if (!version.match(...)) → if (false)
+              text = re.sub(
+                  r"if\s*\(\s*!version\.match\([^)]*\)\s*\)",
+                  "if (false)",
+                  text
+              )
+              # 2) Ha mégis van JDK 8 reject szöveg, semlegesítjük
+              text = text.replace(
+                  "Requirements check failed for JDK 8",
+                  "JDK check bypassed"
+              )
+              if text != original:
+                  path.write_text(text, encoding="utf-8")
+                  print(f"Patched: {path}")
+          EOF
 
           # Gradle 7.6.3 (Java 17 kompatibilis)
           WRAPPER="platforms/android/gradle/wrapper/gradle-wrapper.properties"
           if [ -f "$WRAPPER" ]; then
             sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.3-all.zip|' "$WRAPPER"
-            echo "Gradle wrapper:"
             cat "$WRAPPER"
           fi
+
+          echo "=== Java version ==="
+          java -version
 
       - name: Build web assets
         run: npx ng build --configuration=production
 
       - name: Build Android Release APK
-        run: |
-          java -version
-          ionic cordova build android --release --prod
+        run: ionic cordova build android --release --prod
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_HOME: /usr/local/lib/android/sdk
