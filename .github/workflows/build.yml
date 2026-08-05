@@ -53,38 +53,46 @@ jobs:
       - name: Build web assets
         run: npx ng build --configuration=production
 
-      - name: Build Android Release APK (unsigned)
+      - name: Build Android Release APK
         run: ionic cordova build android --release --prod
 
-      # ---------- Aláírás (csak ha be vannak állítva a secret-ek) ----------
-      - name: Decode keystore
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+      - name: Decode and sign APK
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android.keystore
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "Nincs keystore secret, aláírás kihagyva."
+            exit 0
+          fi
 
-      - name: Sign the APK
-        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
-        run: |
-          # Megkeressük az unsigned APK-t
+          echo "$KEYSTORE_BASE64" | base64 -d > android.keystore
+
           UNSIGNED_APK=$(find platforms/android -name "*-release-unsigned.apk" | head -n 1)
+
+          if [ -z "$UNSIGNED_APK" ]; then
+            echo "Nem található unsigned APK"
+            find platforms/android -name "*.apk" || true
+            exit 1
+          fi
+
           echo "Unsigned APK: $UNSIGNED_APK"
 
-          # Aláírás
           jarsigner -verbose \
             -sigalg SHA256withRSA \
             -digestalg SHA-256 \
             -keystore android.keystore \
-            -storepass "${{ secrets.KEYSTORE_PASSWORD }}" \
-            -keypass "${{ secrets.KEY_PASSWORD }}" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -keypass "$KEY_PASSWORD" \
             "$UNSIGNED_APK" \
-            "${{ secrets.KEY_ALIAS }}"
+            "$KEY_ALIAS"
 
-          # zipalign
-          ALIGNED_APK="app-release-signed.apk"
-          zipalign -v 4 "$UNSIGNED_APK" "$ALIGNED_APK"
+          zipalign -v 4 "$UNSIGNED_APK" app-release-signed.apk
 
-          echo "Signed APK prepared: $ALIGNED_APK"
-          ls -la "$ALIGNED_APK"
+          echo "Aláírt APK kész: app-release-signed.apk"
+          ls -la app-release-signed.apk
 
       - name: Upload web build (www)
         uses: actions/upload-artifact@v4
