@@ -56,10 +56,8 @@ jobs:
               text = path.read_text(encoding="utf-8", errors="ignore")
               original = text
 
-              # 1) Bármilyen !version.match(...) → false
               text = re.sub(r"!version\.match\([^)]*\)", "false", text)
 
-              # 2) JDK-s Q.reject → Q.resolve (többsoros is)
               text = re.sub(
                   r"return\s+Q\.reject\(\s*new\s+CordovaError\([\s\S]*?(?:JDK|JAVA_HOME|ANDROID_SDK)[\s\S]*?\)\s*\)",
                   "return Q.resolve(true)",
@@ -67,14 +65,12 @@ jobs:
                   flags=re.IGNORECASE,
               )
 
-              # 3) Ha van 'Detected version' reject szöveg, azt is resolve-ra cseréljük
               text = re.sub(
                   r"return\s+Q\.reject\(\s*new\s+CordovaError\([\s\S]{0,300}?Detected version[\s\S]{0,200}?\)\s*\)",
                   "return Q.resolve(true)",
                   text,
               )
 
-              # 4) Extra biztonság: a version változót 1.8.0-ra kényszerítjük a match előtt
               text = re.sub(
                   r"(var\s+version\s*=\s*)([^;]+)(;)",
                   r"\1'1.8.0'\3",
@@ -89,14 +85,12 @@ jobs:
                   print(f"No change: {path}")
           EOF
 
-          # Gradle 7.6.3
           WRAPPER="platforms/android/gradle/wrapper/gradle-wrapper.properties"
           if [ -f "$WRAPPER" ]; then
             sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.3-all.zip|' "$WRAPPER"
             cat "$WRAPPER"
           fi
 
-          echo "=== Java ==="
           java -version
 
       - name: Build web assets
@@ -144,7 +138,6 @@ jobs:
           ZIPALIGN=$(find /usr/local/lib/android/sdk/build-tools -name zipalign | sort | tail -n 1)
           "$ZIPALIGN" -v 4 "$UNSIGNED_APK" app-release-signed.apk
 
-          echo "Aláírt APK kész:"
           ls -la app-release-signed.apk
 
       - name: Upload web build (www)
@@ -159,11 +152,6 @@ jobs:
         with:
           name: app-release-apk
           path: |
-            app-release-signed.apk
-            platforms/android/app/build/outputs/apk/release/*.apk
-            platforms/android/build/outputs/apk/release/*.apk
-          retention-days: 7
-          if-no-files-found: warn
             app-release-signed.apk
             platforms/android/app/build/outputs/apk/release/*.apk
             platforms/android/build/outputs/apk/release/*.apk
