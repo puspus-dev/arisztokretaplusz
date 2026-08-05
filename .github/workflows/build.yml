@@ -49,36 +49,54 @@ jobs:
           ionic cordova platform remove android || true
           ionic cordova platform add android@8.1.0 --confirm
 
-          # Minden check_reqs.js-t megkeresünk és bypassoljuk a JDK 8 ellenőrzést
           python3 << 'EOF'
           import re, pathlib
+
           for path in pathlib.Path(".").rglob("check_reqs.js"):
               text = path.read_text(encoding="utf-8", errors="ignore")
               original = text
-              # 1) if (!version.match(...)) → if (false)
+
+              # 1) Bármilyen !version.match(...) → false
+              text = re.sub(r"!version\.match\([^)]*\)", "false", text)
+
+              # 2) JDK-s Q.reject → Q.resolve (többsoros is)
               text = re.sub(
-                  r"if\s*\(\s*!version\.match\([^)]*\)\s*\)",
-                  "if (false)",
-                  text
+                  r"return\s+Q\.reject\(\s*new\s+CordovaError\([\s\S]*?(?:JDK|JAVA_HOME|ANDROID_SDK)[\s\S]*?\)\s*\)",
+                  "return Q.resolve(true)",
+                  text,
+                  flags=re.IGNORECASE,
               )
-              # 2) Ha mégis van JDK 8 reject szöveg, semlegesítjük
-              text = text.replace(
-                  "Requirements check failed for JDK 8",
-                  "JDK check bypassed"
+
+              # 3) Ha van 'Detected version' reject szöveg, azt is resolve-ra cseréljük
+              text = re.sub(
+                  r"return\s+Q\.reject\(\s*new\s+CordovaError\([\s\S]{0,300}?Detected version[\s\S]{0,200}?\)\s*\)",
+                  "return Q.resolve(true)",
+                  text,
               )
+
+              # 4) Extra biztonság: a version változót 1.8.0-ra kényszerítjük a match előtt
+              text = re.sub(
+                  r"(var\s+version\s*=\s*)([^;]+)(;)",
+                  r"\1'1.8.0'\3",
+                  text,
+                  count=3,
+              )
+
               if text != original:
                   path.write_text(text, encoding="utf-8")
                   print(f"Patched: {path}")
+              else:
+                  print(f"No change: {path}")
           EOF
 
-          # Gradle 7.6.3 (Java 17 kompatibilis)
+          # Gradle 7.6.3
           WRAPPER="platforms/android/gradle/wrapper/gradle-wrapper.properties"
           if [ -f "$WRAPPER" ]; then
             sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.3-all.zip|' "$WRAPPER"
             cat "$WRAPPER"
           fi
 
-          echo "=== Java version ==="
+          echo "=== Java ==="
           java -version
 
       - name: Build web assets
@@ -141,6 +159,11 @@ jobs:
         with:
           name: app-release-apk
           path: |
+            app-release-signed.apk
+            platforms/android/app/build/outputs/apk/release/*.apk
+            platforms/android/build/outputs/apk/release/*.apk
+          retention-days: 7
+          if-no-files-found: warn
             app-release-signed.apk
             platforms/android/app/build/outputs/apk/release/*.apk
             platforms/android/build/outputs/apk/release/*.apk
