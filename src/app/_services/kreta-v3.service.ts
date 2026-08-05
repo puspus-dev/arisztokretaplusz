@@ -23,13 +23,12 @@ import { SubjectAverage } from "../_models/kreta-v3/average";
 import { stringify } from "querystring";
 import { KretaRenewTokenError } from "../_exceptions";
 import { HomeworkComment } from "../_models/kreta-v3/!homeworkComment";
-import { FirebaseService } from '../_services/firebase.service';
-import { AndroidPermissions } from '@ionic-native/android-permissions/ngx';
-import { Platform } from '@ionic/angular';
+import { FirebaseService } from "../_services/firebase.service";
+import { AndroidPermissions } from "@ionic-native/android-permissions/ngx";
+import { Platform } from "@ionic/angular";
 import { File, FileEntry } from "@ionic-native/file/ngx";
 import {
     FileTransfer,
-    FileUploadOptions,
     FileTransferObject,
 } from "@ionic-native/file-transfer/ngx";
 import { GithubError } from "../_exceptions/github-exception";
@@ -39,30 +38,34 @@ import * as CryptoJS from "crypto-js";
     providedIn: "root",
 })
 export class KretaV3Service {
-    private _userAgent: string = "hu.ekreta.tanulo/1.0.5/Android/0/0";
+    // === Legfrissebb konstansok (2025–2026) ===
+    private _userAgent: string =
+        "eKretaStudent/264745 CFNetwork/1494.0.7 Darwin/23.4.0";
     public get userAgent() {
         return this._userAgent;
     }
 
-    private clientId: string = "kreta-ellenorzo-mobile-android";
+    private clientId: string = "kreta-ellenorzo-student-mobile-ios";
     private apiKey: string = "21ff6c25-d1da-4a68-a811-c881a6057463";
     private readonly policyKey = CryptoJS.enc.Utf8.parse("baSsxOwlU1jM");
 
+    // Endpointok – V3 nagybetűvel (aktuális kliensek szerint)
     private endpoints = {
-        student: "/ellenorzo/v3/sajat/TanuloAdatlap",
-        classGroups: "/ellenorzo/v3/sajat/OsztalyCsoportok",
-        absences: "/ellenorzo/v3/sajat/Mulasztasok",
-        homeworks: "/ellenorzo/v3/sajat/HaziFeladatok",
-        homeworkAttachment: "/ellenorzo/v3/sajat/HaziFeladatok/Csatolmanyok",
-        notes: "/ellenorzo/v3/sajat/Feljegyzesek",
-        evaluations: "/ellenorzo/v3/sajat/Ertekelesek",
-        tests: "/ellenorzo/v3/sajat/BejelentettSzamonkeresek",
-        events: "/ellenorzo/v3/sajat/FaliujsagElemek",
-        schoolYearPlan: "/ellenorzo/v3/sajat/Intezmenyek/TanevRendjeElemek",
-        timetable: "/ellenorzo/v3/sajat/OrarendElemek",
-        averages: "/ellenorzo/v3/sajat/Ertekelesek/Atlagok/TantargyiAtlagok",
-        classAverages: "/ellenorzo/v3/sajat/Ertekelesek/Atlagok/OsztalyAtlagok",
-        headTeachers: "/ellenorzo/v3/felhasznalok/Alkalmazottak/Tanarok/Osztalyfonokok",
+        student: "/ellenorzo/V3/sajat/TanuloAdatlap",
+        classGroups: "/ellenorzo/V3/sajat/OsztalyCsoportok",
+        absences: "/ellenorzo/V3/sajat/Mulasztasok",
+        homeworks: "/ellenorzo/V3/sajat/HaziFeladatok",
+        homeworkAttachment: "/ellenorzo/V3/sajat/HaziFeladatok/Csatolmanyok",
+        notes: "/ellenorzo/V3/sajat/Feljegyzesek",
+        evaluations: "/ellenorzo/V3/sajat/Ertekelesek",
+        tests: "/ellenorzo/V3/sajat/BejelentettSzamonkeresek",
+        events: "/ellenorzo/V3/sajat/FaliujsagElemek",
+        schoolYearPlan: "/ellenorzo/V3/sajat/Intezmenyek/TanevRendjeElemek",
+        timetable: "/ellenorzo/V3/sajat/OrarendElemek",
+        averages: "/ellenorzo/V3/sajat/Ertekelesek/Atlagok/TantargyiAtlagok",
+        classAverages: "/ellenorzo/V3/sajat/Ertekelesek/Atlagok/OsztalyAtlagok",
+        headTeachers:
+            "/ellenorzo/V3/felhasznalok/Alkalmazottak/Tanarok/Osztalyfonokok",
     };
 
     constructor(
@@ -71,10 +74,16 @@ export class KretaV3Service {
         private _platform: Platform,
         private _file: File,
         private _androidPermissions: AndroidPermissions,
-        private _transfer: FileTransfer,
+        private _transfer: FileTransfer
     ) {}
 
-    private async generatePolicyHeaders(instituteCode: string, username: string): Promise<{
+    // ============================================================
+    // Policy header generálás (még mindig kell a password grant-hoz)
+    // ============================================================
+    private async generatePolicyHeaders(
+        instituteCode: string,
+        username: string
+    ): Promise<{
         "X-AuthorizationPolicy-Key": string;
         "X-AuthorizationPolicy-Version": string;
         "X-AuthorizationPolicy-Nonce": string;
@@ -90,7 +99,8 @@ export class KretaV3Service {
             throw new Error("Nem sikerült nonce-t lekérni az IDP-től");
         }
 
-        const message = instituteCode.toUpperCase() + nonce + username.toUpperCase();
+        const message =
+            instituteCode.toUpperCase() + nonce + username.toUpperCase();
         const hmac = CryptoJS.HmacSHA512(message, this.policyKey);
         const key = CryptoJS.enc.Base64.stringify(hmac);
 
@@ -101,18 +111,22 @@ export class KretaV3Service {
         };
     }
 
+    // ============================================================
+    // Alap request helper
+    // ============================================================
     private async doRequestWithAuth<T>(
         url: string,
-        params,
-        headers,
+        params: any,
+        headers: any,
         v3Tokens: Token,
         method: string,
         queryName: string,
         errorTitleKey?: string,
         errorTextKey?: string
     ): Promise<T> {
-        if (!this.http[method])
+        if (!this.http[method]) {
             throw new Error(`Method ${method} does not exist on the HTTP library`);
+        }
         if (!headers) headers = {};
         if (!params) params = {};
 
@@ -137,17 +151,29 @@ export class KretaV3Service {
     ) {
         console.log("Error with v3 API", error);
         const errorstr = stringify(error);
-        if (error instanceof SyntaxError) throw new KretaV3InvalidResponseError(queryName);
-        if (error.status && error.status < 0) throw new KretaV3NetworkError(queryName);
+        if (error instanceof SyntaxError)
+            throw new KretaV3InvalidResponseError(queryName);
+        if (error.status && error.status < 0)
+            throw new KretaV3NetworkError(queryName);
         if (error.status && error.status == 401)
             throw new KretaV3InvalidGrantError(queryName, error);
         if (error.status && error.status == 400 && errorstr.includes("invalid_grant"))
             throw new KretaRenewTokenError(error);
-        if (error.status && error.status == 409 && errorstr.includes("IntezmenyMarTanevetValtott"))
+        if (
+            error.status &&
+            error.status == 409 &&
+            errorstr.includes("IntezmenyMarTanevetValtott")
+        )
             throw new KretaV3SchoolYearChangedError(error);
+
         console.log(error);
         console.log(errorstr);
-        throw new KretaV3HttpError(queryName, error, errorTitleKey, errorTextKey);
+        throw new KretaV3HttpError(
+            queryName,
+            error,
+            errorTitleKey,
+            errorTextKey
+        );
     }
 
     protected get<T>(
@@ -159,7 +185,16 @@ export class KretaV3Service {
         errorTitleKey?: string,
         errorTextKey?: string
     ) {
-        return this.doRequestWithAuth<T>(url, params, headers, v3Tokens, "get", queryName, errorTitleKey, errorTextKey);
+        return this.doRequestWithAuth<T>(
+            url,
+            params,
+            headers,
+            v3Tokens,
+            "get",
+            queryName,
+            errorTitleKey,
+            errorTextKey
+        );
     }
 
     protected post<T>(
@@ -171,49 +206,147 @@ export class KretaV3Service {
         errorTitleKey?: string,
         errorTextKey?: string
     ) {
-        return this.doRequestWithAuth<T>(url, params, headers, v3Tokens, "post", queryName, errorTitleKey, errorTextKey);
+        return this.doRequestWithAuth<T>(
+            url,
+            params,
+            headers,
+            v3Tokens,
+            "post",
+            queryName,
+            errorTitleKey,
+            errorTextKey
+        );
     }
 
-    public async getInstituteList(): Promise<Institute[]> {
-        const queryName = "getInstituteList";
+    // ============================================================
+    // INTÉZMÉNYKERESŐ (Folio / toll stílus)
+    // ============================================================
+    /**
+     * Intézmény keresése a hivatalos keresővel.
+     * A régi teljes lista endpoint már nem működik.
+     */
+    public async searchInstitutes(query: string): Promise<Institute[]> {
+        const queryName = "searchInstitutes";
+
+        if (!query || query.trim().length < 2) {
+            return [];
+        }
+
         try {
+            const encoded = encodeURIComponent(query.trim());
+            const url = `https://intezmenykereso.e-kreta.hu/instituteSelector/${encoded}?showOnlyLive=true`;
+
             const resp = await this.http.get(
-                "https://kretaglobalmobileapi2.ekreta.hu/api/v3/Institute",
+                url,
                 {},
                 {
                     "User-Agent": this._userAgent,
-                    "apiKey": "7856d350-1fda-45f5-822d-e1a2f3f1acf0",
+                    Accept: "text/html",
                 }
             );
-            const list = JSON.parse(resp.data);
-            return list.map((item: any) => ({
-                instituteId: item.instituteId,
-                instituteCode: item.instituteCode,
-                name: item.name,
-                city: item.city,
-                url: item.url || `https://${item.instituteCode}.e-kreta.hu`,
-            })) as Institute[];
+
+            const html = (resp.data || "").toString();
+            return this.parseInstituteHTML(html);
         } catch (error) {
+            console.error("Institute search failed", error);
+
+            // Sajat listam :P Nemtom hogy minden kretas suli benne van de remelem :3
             try {
                 const resp = await this.http.get(
-                    "https://raw.githubusercontent.com/Coware-Apps/ellenorzo/master/docs/insitute_list.json",
+                    "https://sulinet.site.je/iskolak-v1.json",
                     {},
                     {}
                 );
-                return <Institute[]>JSON.parse(resp.data);
+                const list = <Institute[]>JSON.parse(resp.data);
+                const q = query.toLowerCase();
+                return list.filter(
+                    (i) =>
+                        (i.name && i.name.toLowerCase().includes(q)) ||
+                        (i.instituteCode &&
+                            i.instituteCode.toLowerCase().includes(q)) ||
+                        (i.city && i.city.toLowerCase().includes(q))
+                );
             } catch (e) {
                 throw new GithubError(queryName);
             }
         }
     }
 
-    public async getToken(username: string, password: string, institute: Institute): Promise<Token> {
+    /** HTML válaszból kibányássza az intézményeket (Folio-hoz hasonlóan) */
+    private parseInstituteHTML(html: string): Institute[] {
+        const institutes: Institute[] = [];
+
+        const dataValRegex = /data-val="([^"]+)"/gi;
+        const linkTextRegex = />([^<]+)<\/a>/gi;
+
+        const codes: string[] = [];
+        const texts: string[] = [];
+
+        let match: RegExpExecArray | null;
+
+        while ((match = dataValRegex.exec(html)) !== null) {
+            codes.push(match[1]);
+        }
+        while ((match = linkTextRegex.exec(html)) !== null) {
+            texts.push(match[1]);
+        }
+
+        const count = Math.min(codes.length, texts.length);
+
+        for (let i = 0; i < count; i++) {
+            const code = codes[i];
+            let rawName = texts[i] || code;
+
+            // "Iskola neve (Város)" → csak a név
+            const parenIdx = rawName.lastIndexOf(" (");
+            if (parenIdx > 0) {
+                rawName = rawName.substring(0, parenIdx).trim();
+            }
+
+            institutes.push({
+                instituteId: 0,
+                instituteCode: code,
+                name: rawName,
+                city: "",
+                url: `https://${code}.e-kreta.hu`,
+            } as Institute);
+        }
+
+        return institutes;
+    }
+
+    /**
+     * Régi metódus kompatibilitás miatt.
+     * Ha üres a query, üres tömböt ad vissza (már nincs teljes lista).
+     */
+    public async getInstituteList(query: string = ""): Promise<Institute[]> {
+        if (!query || query.trim().length < 2) {
+            console.warn(
+                "getInstituteList: üres vagy túl rövid query – nincs többé teljes lista. Használj searchInstitutes()-t!"
+            );
+            return [];
+        }
+        return this.searchInstitutes(query);
+    }
+
+    // ============================================================
+    // BEJELENTKEZÉS
+    // ============================================================
+    public async getToken(
+        username: string,
+        password: string,
+        institute: Institute
+    ): Promise<Token> {
         const queryName = "getToken";
         try {
-            const policyHeaders = await this.generatePolicyHeaders(institute.instituteCode, username);
+            const policyHeaders = await this.generatePolicyHeaders(
+                institute.instituteCode,
+                username
+            );
             const headers = {
                 "User-Agent": this._userAgent,
-                "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+                "Content-Type":
+                    "application/x-www-form-urlencoded; charset=utf-8",
                 ...policyHeaders,
             };
             const params = {
@@ -223,18 +356,31 @@ export class KretaV3Service {
                 client_id: this.clientId,
                 grant_type: "password",
             };
-            const resp = await this.http.post("https://idp.e-kreta.hu/connect/token", params, headers);
+            const resp = await this.http.post(
+                "https://idp.e-kreta.hu/connect/token",
+                params,
+                headers
+            );
             return <Token>JSON.parse(resp.data);
         } catch (error) {
-            this.handleError(error, queryName, `${queryName}.title`, `${queryName}.text`);
+            this.handleError(
+                error,
+                queryName,
+                `${queryName}.title`,
+                `${queryName}.text`
+            );
         }
     }
 
-    public async renewToken(refresh_token: string, instituteCode?: string): Promise<Token> {
+    public async renewToken(
+        refresh_token: string,
+        instituteCode?: string
+    ): Promise<Token> {
         const queryName = "renewToken";
         const headers = {
             "User-Agent": this._userAgent,
-            "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+            "Content-Type":
+                "application/x-www-form-urlencoded; charset=utf-8",
         };
         const params: any = {
             refresh_token: refresh_token,
@@ -244,43 +390,145 @@ export class KretaV3Service {
         if (instituteCode) params.institute_code = instituteCode;
 
         try {
-            const resp = await this.http.post("https://idp.e-kreta.hu/connect/token", params, headers);
+            const resp = await this.http.post(
+                "https://idp.e-kreta.hu/connect/token",
+                params,
+                headers
+            );
             return <Token>JSON.parse(resp.data);
         } catch (error) {
-            this.handleError(error, queryName, `${queryName}.title`, `${queryName}.text`);
+            this.handleError(
+                error,
+                queryName,
+                `${queryName}.title`,
+                `${queryName}.text`
+            );
         }
     }
 
-    public async getStudent(tokens: Token, institute: Institute): Promise<Student> {
-        return this.get<Student>(institute.url + this.endpoints.student, null, null, tokens, "getStudent", "getStudent.title", "getStudent.text");
+    // ============================================================
+    // ADATLEKÉRÉSEK
+    // ============================================================
+    public async getStudent(
+        tokens: Token,
+        institute: Institute
+    ): Promise<Student> {
+        return this.get<Student>(
+            institute.url + this.endpoints.student,
+            null,
+            null,
+            tokens,
+            "getStudent",
+            "getStudent.title",
+            "getStudent.text"
+        );
     }
 
-    public async getClassGroups(tokens: Token, institute: Institute): Promise<ClassGroup[]> {
-        return this.get<ClassGroup[]>(institute.url + this.endpoints.classGroups, null, null, tokens, "getClassGroups", "getClassGroups.title", "getClassGroups.text");
+    public async getClassGroups(
+        tokens: Token,
+        institute: Institute
+    ): Promise<ClassGroup[]> {
+        return this.get<ClassGroup[]>(
+            institute.url + this.endpoints.classGroups,
+            null,
+            null,
+            tokens,
+            "getClassGroups",
+            "getClassGroups.title",
+            "getClassGroups.text"
+        );
     }
 
-    public async getAbsences(tokens: Token, institute: Institute): Promise<Absence[]> {
-        return this.get<Absence[]>(institute.url + this.endpoints.absences, null, null, tokens, "getAbsences", "getAbsences.title", "getAbsences.text");
+    public async getAbsences(
+        tokens: Token,
+        institute: Institute
+    ): Promise<Absence[]> {
+        return this.get<Absence[]>(
+            institute.url + this.endpoints.absences,
+            null,
+            null,
+            tokens,
+            "getAbsences",
+            "getAbsences.title",
+            "getAbsences.text"
+        );
     }
 
-    public async getNotes(tokens: Token, institute: Institute): Promise<Note[]> {
-        return this.get<Note[]>(institute.url + this.endpoints.notes, null, null, tokens, "getNotes", "getNotes.title", "getNotes.text");
+    public async getNotes(
+        tokens: Token,
+        institute: Institute
+    ): Promise<Note[]> {
+        return this.get<Note[]>(
+            institute.url + this.endpoints.notes,
+            null,
+            null,
+            tokens,
+            "getNotes",
+            "getNotes.title",
+            "getNotes.text"
+        );
     }
 
-    public async getEvaluations(tokens: Token, institute: Institute): Promise<Evaluation[]> {
-        return this.get<Evaluation[]>(institute.url + this.endpoints.evaluations, null, null, tokens, "getEvaluations", "getEvaluations.title", "getEvaluations.text");
+    public async getEvaluations(
+        tokens: Token,
+        institute: Institute
+    ): Promise<Evaluation[]> {
+        return this.get<Evaluation[]>(
+            institute.url + this.endpoints.evaluations,
+            null,
+            null,
+            tokens,
+            "getEvaluations",
+            "getEvaluations.title",
+            "getEvaluations.text"
+        );
     }
 
-    public async getTests(tokens: Token, institute: Institute): Promise<Test[]> {
-        return this.get<Test[]>(institute.url + this.endpoints.tests, null, null, tokens, "getTests", "getTests.title", "getTests.text");
+    public async getTests(
+        tokens: Token,
+        institute: Institute
+    ): Promise<Test[]> {
+        return this.get<Test[]>(
+            institute.url + this.endpoints.tests,
+            null,
+            null,
+            tokens,
+            "getTests",
+            "getTests.title",
+            "getTests.text"
+        );
     }
 
-    public async getSchoolYearPlan(tokens: Token, institute: Institute): Promise<SchoolYearPlan[]> {
-        return this.get<SchoolYearPlan[]>(institute.url + this.endpoints.schoolYearPlan, null, null, tokens, "getSchoolYearPlan", "getSchoolYearPlan.title", "getSchoolYearPlan.text");
+    public async getSchoolYearPlan(
+        tokens: Token,
+        institute: Institute
+    ): Promise<SchoolYearPlan[]> {
+        return this.get<SchoolYearPlan[]>(
+            institute.url + this.endpoints.schoolYearPlan,
+            null,
+            null,
+            tokens,
+            "getSchoolYearPlan",
+            "getSchoolYearPlan.title",
+            "getSchoolYearPlan.text"
+        );
     }
 
-    public async getTimetable(tokens: Token, institute: Institute, from: string, to: string): Promise<Lesson[]> {
-        return this.get<Lesson[]>(institute.url + this.endpoints.timetable, { datumTol: from, datumIg: to }, null, tokens, "getTimetable", "getTimetable.title", "getTimetable.text");
+    public async getTimetable(
+        tokens: Token,
+        institute: Institute,
+        from: string,
+        to: string
+    ): Promise<Lesson[]> {
+        return this.get<Lesson[]>(
+            institute.url + this.endpoints.timetable,
+            { datumTol: from, datumIg: to },
+            null,
+            tokens,
+            "getTimetable",
+            "getTimetable.title",
+            "getTimetable.text"
+        );
     }
 
     public async getLessons(
@@ -290,10 +538,14 @@ export class KretaV3Service {
         datumIg: string
     ): Promise<Lesson[]> {
         const queryName = "getLessons";
-        if (new Date(datumIg).valueOf() - new Date(datumTol).valueOf() > 1814400000)
+        if (
+            new Date(datumIg).valueOf() - new Date(datumTol).valueOf() >
+            1814400000
+        ) {
             throw new RangeError(
                 `${queryName} datumTol and datumIg values must have less than 3 weeks in between them.`
             );
+        }
         return this.get<Lesson[]>(
             institute.url + this.endpoints.timetable,
             { datumTol, datumIg },
@@ -327,7 +579,12 @@ export class KretaV3Service {
             const traceEnd = new Date().valueOf();
             return traceEnd - traceStart;
         } catch (error) {
-            this.handleError(error, "getLessonLAB", "getLessonLAB.title", "getLessonLAB.text");
+            this.handleError(
+                error,
+                "getLessonLAB",
+                "getLessonLAB.title",
+                "getLessonLAB.text"
+            );
         }
     }
 
@@ -337,7 +594,9 @@ export class KretaV3Service {
         oktatasiNevelesiFeladatUid?: string
     ): Promise<SubjectAverage[]> {
         const queryName = "getAverages";
-        const params = oktatasiNevelesiFeladatUid ? { oktatasiNevelesiFeladatUid } : null;
+        const params = oktatasiNevelesiFeladatUid
+            ? { oktatasiNevelesiFeladatUid }
+            : null;
         return this.get<SubjectAverage[]>(
             institute.url + this.endpoints.averages,
             params,
@@ -355,7 +614,9 @@ export class KretaV3Service {
         oktatasiNevelesiFeladatUid?: string
     ): Promise<any[]> {
         const queryName = "getClassAverages";
-        const params = oktatasiNevelesiFeladatUid ? { oktatasiNevelesiFeladatUid } : null;
+        const params = oktatasiNevelesiFeladatUid
+            ? { oktatasiNevelesiFeladatUid }
+            : null;
         return this.get<any[]>(
             institute.url + this.endpoints.classAverages,
             params,
@@ -367,8 +628,19 @@ export class KretaV3Service {
         );
     }
 
-    public async getEvents(tokens: Token, institute: Institute): Promise<any> {
-        return this.get<any>(institute.url + this.endpoints.events, null, null, tokens, "getEvents", "getEvents.title", "getEvents.text");
+    public async getEvents(
+        tokens: Token,
+        institute: Institute
+    ): Promise<any> {
+        return this.get<any>(
+            institute.url + this.endpoints.events,
+            null,
+            null,
+            tokens,
+            "getEvents",
+            "getEvents.title",
+            "getEvents.text"
+        );
     }
 
     public async getHomeworks(
@@ -381,8 +653,16 @@ export class KretaV3Service {
     ): Promise<Homework[]> {
         const queryName = "getHomeworks";
         if (type == "date") {
-            if (datumTol && datumIg && new Date(datumIg).valueOf() - new Date(datumTol).valueOf() > 1814400000) {
-                throw new RangeError(`${queryName} datumTol and datumIg values must have less than 3 weeks in between them.`);
+            if (
+                datumTol &&
+                datumIg &&
+                new Date(datumIg).valueOf() -
+                    new Date(datumTol).valueOf() >
+                    1814400000
+            ) {
+                throw new RangeError(
+                    `${queryName} datumTol and datumIg values must have less than 3 weeks in between them.`
+                );
             }
             return this.get<Homework[]>(
                 institute.url + this.endpoints.homeworks,
@@ -443,7 +723,9 @@ export class KretaV3Service {
         homeworkUid: number
     ): Promise<HomeworkComment[]> {
         return this.get<HomeworkComment[]>(
-            institute.url + this.endpoints.homeworks + `/${homeworkUid}/Kommentek`,
+            institute.url +
+                this.endpoints.homeworks +
+                `/${homeworkUid}/Kommentek`,
             null,
             null,
             tokens,
@@ -457,11 +739,14 @@ export class KretaV3Service {
         fileId: number,
         fileName: string,
         tokens: Token,
-        institute: Institute,
+        institute: Institute
     ): Promise<FileEntry> {
         this._firebase.logEvent("download_homework_attachment");
 
-        const splitAt = (index: number) => (x: string) => [x.slice(0, index), x.slice(index)];
+        const splitAt = (index: number) => (x: string) => [
+            x.slice(0, index),
+            x.slice(index),
+        ];
         const newName = splitAt(fileName.lastIndexOf("."))(fileName);
         newName[1] = newName[1].slice(1);
 
@@ -526,11 +811,14 @@ export class KretaV3Service {
         }
 
         await this._androidPermissions
-            .checkPermission(this._androidPermissions.PERMISSION.WRITE_EXTERNAL_STORAGE)
-            .then(result => {
+            .checkPermission(
+                this._androidPermissions.PERMISSION.WRITE_EXTERNAL_STORAGE
+            )
+            .then((result) => {
                 if (!result.hasPermission) {
                     this._androidPermissions.requestPermission(
-                        this._androidPermissions.PERMISSION.WRITE_EXTERNAL_STORAGE
+                        this._androidPermissions.PERMISSION
+                            .WRITE_EXTERNAL_STORAGE
                     );
                 }
             });
@@ -541,7 +829,8 @@ export class KretaV3Service {
         institute: Institute,
         uids: string[]
     ): Promise<any[]> {
-        if (!uids || uids.length == 0) throw new Error(`Cannot get head teachers (missing uids)`);
+        if (!uids || uids.length == 0)
+            throw new Error(`Cannot get head teachers (missing uids)`);
         return this.get<any[]>(
             institute.url + this.endpoints.headTeachers,
             { Uids: uids.join(";") },

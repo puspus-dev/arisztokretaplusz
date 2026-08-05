@@ -122,7 +122,7 @@ export class AppService {
     public analyticsCollectionEnabled: boolean;
     public devSettingsEnabled: boolean;
     public localNotificationsEnabled: boolean;
-    public userAgent: string = "hu.coware.ellenorzo/2.9.11.2020033003 (Android; SM-G950F 0.0)";
+    public userAgent: string = "eKretaStudent/264745 CFNetwork/1494.0.7 Darwin/23.4.0";
     public usersInitData: userInitData[] = [];
     public webUser: WebUser;
     private _languages = [
