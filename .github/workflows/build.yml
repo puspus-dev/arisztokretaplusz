@@ -21,7 +21,8 @@ jobs:
           node-version: 16
           cache: 'npm'
 
-      - name: Setup Java 17
+      # 1) Java 17 csak az Android SDK toolshoz
+      - name: Setup Java 17 (SDK tools)
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -35,6 +36,18 @@ jobs:
       - name: Install Android packages
         run: sdkmanager "platform-tools" "platforms;android-29" "build-tools;29.0.3"
 
+      # 2) Java 8 a Cordova / Gradle buildhez (ez lesz a default JAVA_HOME)
+      - name: Setup Java 8 (Cordova build)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '8'
+
+      - name: Verify Java 8 is active
+        run: |
+          java -version
+          echo "JAVA_HOME=$JAVA_HOME"
+
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
@@ -44,65 +57,34 @@ jobs:
       - name: Install Ionic & Cordova CLI
         run: npm install -g @ionic/cli cordova@10
 
-      - name: Prepare Cordova Android platform
+      - name: Add Cordova Android platform
         run: |
           ionic cordova platform remove android || true
           ionic cordova platform add android@8.1.0 --confirm
-
-          python3 << 'EOF'
-          import re, pathlib
-
-          for path in pathlib.Path(".").rglob("check_reqs.js"):
-              text = path.read_text(encoding="utf-8", errors="ignore")
-              original = text
-
-              text = re.sub(r"!version\.match\([^)]*\)", "false", text)
-
-              text = re.sub(
-                  r"return\s+Q\.reject\(\s*new\s+CordovaError\([\s\S]*?(?:JDK|JAVA_HOME|ANDROID_SDK)[\s\S]*?\)\s*\)",
-                  "return Q.resolve(true)",
-                  text,
-                  flags=re.IGNORECASE,
-              )
-
-              text = re.sub(
-                  r"return\s+Q\.reject\(\s*new\s+CordovaError\([\s\S]{0,300}?Detected version[\s\S]{0,200}?\)\s*\)",
-                  "return Q.resolve(true)",
-                  text,
-              )
-
-              text = re.sub(
-                  r"(var\s+version\s*=\s*)([^;]+)(;)",
-                  r"\1'1.8.0'\3",
-                  text,
-                  count=3,
-              )
-
-              if text != original:
-                  path.write_text(text, encoding="utf-8")
-                  print(f"Patched: {path}")
-              else:
-                  print(f"No change: {path}")
-          EOF
-
-          WRAPPER="platforms/android/gradle/wrapper/gradle-wrapper.properties"
-          if [ -f "$WRAPPER" ]; then
-            sed -i 's|distributionUrl=.*|distributionUrl=https\\://services.gradle.org/distributions/gradle-7.6.3-all.zip|' "$WRAPPER"
-            cat "$WRAPPER"
+          chmod +x platforms/android/gradlew || true
+          # Győződjünk meg, hogy a wrapper van használva, ne a rendszer Gradle 9
+          if [ -f platforms/android/gradle/wrapper/gradle-wrapper.properties ]; then
+            cat platforms/android/gradle/wrapper/gradle-wrapper.properties
           fi
-
-          java -version
 
       - name: Build web assets
         run: npx ng build --configuration=production
 
       - name: Build Android Release APK
-        run: ionic cordova build android --release --prod
+        run: |
+          java -version
+          # Eltávolítjuk a rendszer gradle-t a PATH-ból, hogy a gradlew menjen
+          export PATH="$JAVA_HOME/bin:/usr/local/lib/android/sdk/platform-tools:$PATH"
+          # Ha van /usr/share/gradle, ne az legyen előbb
+          hash -r
+          which java
+          which gradle || echo "system gradle not in path (good)"
+          ionic cordova build android --release --prod
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
           ANDROID_HOME: /usr/local/lib/android/sdk
 
-      - name: Decode and sign APK
+      - name: Sign APK
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
@@ -117,7 +99,6 @@ jobs:
           echo "$KEYSTORE_BASE64" | base64 -d > android.keystore
 
           UNSIGNED_APK=$(find platforms/android -name "*-release-unsigned.apk" | head -n 1)
-
           if [ -z "$UNSIGNED_APK" ]; then
             echo "Nem található unsigned APK:"
             find platforms/android -name "*.apk" || true
@@ -137,10 +118,9 @@ jobs:
 
           ZIPALIGN=$(find /usr/local/lib/android/sdk/build-tools -name zipalign | sort | tail -n 1)
           "$ZIPALIGN" -v 4 "$UNSIGNED_APK" app-release-signed.apk
-
           ls -la app-release-signed.apk
 
-      - name: Upload web build (www)
+      - name: Upload web build
         uses: actions/upload-artifact@v4
         with:
           name: www
